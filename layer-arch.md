@@ -49,3 +49,9 @@ model = tf.keras.Sequential([
 |Dense|Make decisions / classifications based on learned features|
 |Dropout (optional)|Prevent overfitting by randomly turning off neurons|
 |Rescaling (optional)| Normalize pixel values to 0–1|
+
+###### Notes:
+Input Shape: (height, width, channels) — e.g. (150, 150, 3) for RGB images.
+You can add more Conv2D+MaxPooling2D pairs to extract deeper features.
+Dropout is great for preventing overfitting especially with small datasets.
+Final Dense(num_classes) layer gives raw scores (logits) unless you add Softmax.
