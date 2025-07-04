@@ -2,6 +2,8 @@ import numpy as np
 import cv2
 import os
 import matplotlib.pyplot as plt
+import pandas as pd
+import json
 from glob import glob
 
 class FishBehaviorAgent:
@@ -12,7 +14,7 @@ class FishBehaviorAgent:
         self.flow_vis_dir = flow_vis_dir
 
     def extract_frames(self):
-        # Check if frame folder exists and has frames
+        """Extract frames from the video, save them as images to disk."""
         if os.path.exists(self.frames_dir):
             existing_files = [f for f in os.listdir(self.frames_dir) if f.endswith(".png")]
             if existing_files:
@@ -20,14 +22,11 @@ class FishBehaviorAgent:
                 return
 
         os.makedirs(self.frames_dir, exist_ok=True)
-
         cap = cv2.VideoCapture(self.video_path)
         if not cap.isOpened():
             raise IOError(f"Cannot open video {self.video_path}")
 
-        frame_idx = 0
-        saved_count = 0
-
+        frame_idx, saved_count = 0, 0
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -42,7 +41,7 @@ class FishBehaviorAgent:
         print(f"Extracted and saved {saved_count} frames in '{self.frames_dir}'.")
 
     def compute_optical_flow(self, visualize=True, save_vis=True):
-        # Read all frames from the frames_dir
+        """Compute dense optical flow between saved frames and visualize/save results."""
         frame_files = sorted(glob(os.path.join(self.frames_dir, "*.png")))
         if len(frame_files) < 2:
             raise ValueError("Need at least two frames to compute optical flow.")
@@ -64,7 +63,7 @@ class FishBehaviorAgent:
                 0.5, 3, 15, 3, 5, 1.2, 0
             )
 
-            # Create HSV visualization of flow
+            # HSV visualization
             magnitude, angle = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             hsv = np.zeros_like(frame)
             hsv[..., 1] = 255
@@ -87,25 +86,21 @@ class FishBehaviorAgent:
         print(f"Computed optical flow for {len(frame_files) - 1} frame pairs. Visualizations saved to '{self.flow_vis_dir}'.")
 
     def analyze_flows(self):
+        """Analyze motion patterns: average speed, directions, heatmap, and export results."""
         print("Analyzing optical flows...")
 
-        flow_files = sorted(glob(os.path.join(self.flow_vis_dir, "*.png")))
-        if not flow_files:
-            raise ValueError("No optical flow visualizations found. Run compute_optical_flow first.")
+        frame_files = sorted(glob(os.path.join(self.frames_dir, "*.png")))
+        if len(frame_files) < 2:
+            raise ValueError("Not enough frames for analysis.")
 
-        avg_speeds = []
-        all_angles = []
+        avg_speeds, all_angles = [], []
         heatmap = None
 
-        frame_files = sorted(glob(os.path.join(self.frames_dir, "*.png")))
-
         for i in range(1, len(frame_files)):
-            # Load original frames for heatmap resolution
             frame = cv2.imread(frame_files[i])
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            # Reload the flow from compute_optical_flow stage
             prev_gray = cv2.cvtColor(cv2.imread(frame_files[i - 1]), cv2.COLOR_BGR2GRAY)
+
             flow = cv2.calcOpticalFlowFarneback(
                 prev_gray, gray, None,
                 0.5, 3, 15, 3, 5, 1.2, 0
@@ -114,7 +109,13 @@ class FishBehaviorAgent:
             magnitude, angle = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             avg_speed = np.mean(magnitude)
             avg_speeds.append(avg_speed)
-            all_angles.extend(angle.flatten())
+
+            # Memory-safe: sample up to 1000 angles per frame
+            angle_flat = angle.flatten()
+            sample_size = min(1000, len(angle_flat))
+            sample_indices = np.random.choice(len(angle_flat), size=sample_size, replace=False)
+            sampled_angles = angle_flat[sample_indices]
+            all_angles.extend(sampled_angles)
 
             if heatmap is None:
                 heatmap = magnitude.copy()
@@ -155,7 +156,43 @@ class FishBehaviorAgent:
 
         print("Analysis complete!")
 
+        # Export results
+        results_dir = "results"
+        os.makedirs(results_dir, exist_ok=True)
+
+        # 1) Export average speed time series to CSV
+        df_speed = pd.DataFrame({
+            "frame_idx": list(range(1, len(avg_speeds) + 1)),
+            "average_speed": avg_speeds
+        })
+        csv_speed_path = os.path.join(results_dir, "average_speeds.csv")
+        df_speed.to_csv(csv_speed_path, index=False)
+        print(f"Average swim speeds saved to {csv_speed_path}")
+
+        # 2) Export direction histogram to JSON
+        hist, bin_edges = np.histogram(angles_deg, bins=36, range=(0, 360))
+        hist_data = {
+            "angle_bins": bin_edges.tolist(),
+            "counts": hist.tolist()
+        }
+        json_hist_path = os.path.join(results_dir, "direction_histogram.json")
+        with open(json_hist_path, "w") as f:
+            json.dump(hist_data, f, indent=2)
+        print(f"Direction histogram saved to {json_hist_path}")
+
+        # 3) Save analysis metadata to JSON
+        metadata = {
+            "video_path": self.video_path,
+            "frame_skip": self.frame_skip,
+            "frames_analyzed": len(avg_speeds),
+        }
+        json_meta_path = os.path.join(results_dir, "analysis_metadata.json")
+        with open(json_meta_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"Analysis metadata saved to {json_meta_path}")
+
     def run(self):
+        """Run full pipeline: frame extraction, optical flow, analysis."""
         print("Checking frame folder...")
         self.extract_frames()
         print("Frame extraction done (or skipped).")
@@ -167,8 +204,9 @@ class FishBehaviorAgent:
         print("Starting analysis of optical flow...")
         self.analyze_flows()
 
-
 if __name__ == "__main__":
-    agent = FishBehaviorAgent(r"C:\Users\dolap\OneDrive\Documents\DOLAPO\data-analysis\Numpy-Keras-Seaborn-and-LSTM-1\datasets\test_video.mp4", frame_skip=2)
+    agent = FishBehaviorAgent(
+        r"C:\Users\dolap\OneDrive\Documents\DOLAPO\data-analysis\Numpy-Keras-Seaborn-and-LSTM-1\datasets\test_video.mp4",
+        frame_skip=2
+    )
     agent.run()
-# Replace "your_fish_video.mp4" with the path to your video file
