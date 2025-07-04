@@ -93,3 +93,8 @@ class FishBehaviorAgent:
         print("Starting optical flow computation from saved frames...")
         self.compute_optical_flow(visualize=True, save_vis=True)
         print("Optical flow computation done.")
+
+if __name__ == "__main__":
+    agent = FishBehaviorAgent("your_fish_video.mp4", frame_skip=2)
+    agent.run()
+# Replace "your_fish_video.mp4" with the path to your video file
